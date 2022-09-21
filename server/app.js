@@ -19,6 +19,7 @@
 
 "use strict";
 const axios = require("axios");
+const _ = require("lodash");
 const Animal = require("../Themes/animal");
 // Use dotenv to read .env vars into Node
 require("dotenv").config();
@@ -32,7 +33,11 @@ const request = require("request"),
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 
-let theme;
+let theme = {};
+
+module.exports = {
+  theme,
+};
 
 // Parse application/x-www-form-urlencoded
 app.use(urlencoded({ extended: true }));
@@ -87,7 +92,7 @@ app.post("/webhook", (req, res) => {
       let senderPsid = webhookEvent.sender.id;
       let recipientId = webhookEvent.recipient.id;
 
-      console.log(webhookEvent);
+      console.log("webhookEvent => ", webhookEvent);
 
       if (webhookEvent.postback) {
         handlePostback(senderPsid, webhookEvent.postback);
@@ -113,59 +118,81 @@ app.post("/webhook", (req, res) => {
   }
 });
 
-async function firstTrait(nlp, name) {
-  return nlp && nlp.entities && nlp.traits[name] && nlp.traits[name][0];
-}
-
 async function handleQuickReply(senderPsid, quickReply) {
   let response;
   let payload = quickReply.payload;
   const user = await getUserData(senderPsid);
 
   if (user) {
-    if (theme === "animal") {
-      let theme = new Animal(user);
-      response = theme.handlePayload(payload);
-      console.log(response);
-      response.forEach((res) => callSendAPI(senderPsid, res));
+    if (payload === "nothing") {
+      theme = {};
+      console.log("theme", theme);
+      response = [
+        {
+          messaging_type: "RESPONSE",
+          message: {
+            text: `Ok ${user.first_name}. Tu peux me soliciter à tout moment en écrivant "hey my bot" dans le chat ;).`,
+          },
+        },
+        {
+          messaging_type: "RESPONSE",
+          message: {
+            text: `A bientôt ${user.first_name} !`,
+          },
+        },
+      ];
+      await sendMessage(senderPsid, response);
+      return;
+    }
+
+    if (theme.theme === "animal") {
+      if (!theme.animal) {
+        theme.animal = new Animal(user);
+        await callSendAPI(senderPsid, {
+          message: {
+            text: `Ok ${user.first_name}, On va te trouver ça ;)`,
+          },
+        });
+      }
+
+      response = await theme.animal.handlePayload(payload);
+
+      await sendMessage(senderPsid, response);
+
+      if (payload === "animal:adopted") {
+        theme = {};
+      }
     }
 
     if (payload === "animal") {
-      theme = "animal";
-      response = {
-        messaging_type: "RESPONSE",
-        message: {
-          text: `Ok ${user.first_name}, je vais te poser quelques questions pour trouver le bon animal pour toi !`,
+      theme.theme = "animal";
+      response = [
+        {
+          messaging_type: "RESPONSE",
+          message: {
+            text: `Ok ${user.first_name}, je vais te poser quelques questions pour trouver le bon animal pour toi !`,
+          },
         },
-      };
-      callSendAPI(senderPsid, response);
-
-      response = {
-        messaging_type: "RESPONSE",
-        message: {
-          text: `Quel type d'animal recherches-tu ?`,
-          quick_replies: [
-            {
-              content_type: "text",
-              title: "Chien",
-              payload: "want_dog",
-            },
-            {
-              content_type: "text",
-              title: "Chat",
-              payload: "want_cat",
-            },
-          ],
+        {
+          messaging_type: "RESPONSE",
+          message: {
+            text: `Quel type d'animal recherches-tu ?`,
+            quick_replies: [
+              {
+                content_type: "text",
+                title: "Un chien 🐶",
+                payload: "want_dog",
+              },
+              {
+                content_type: "text",
+                title: "Un chat 😺",
+                payload: "want_cat",
+              },
+            ],
+          },
         },
-      };
-      callSendAPI(senderPsid, response);
-    } else if (payload === "nothing") {
-      response = {
-        messaging_type: "RESPONSE",
-        message: {
-          text: `Ok ${user.first_name}, à bientôt !`,
-        },
-      };
+      ];
+      await sendMessage(senderPsid, response);
     }
   }
 }
@@ -173,83 +200,60 @@ async function handleQuickReply(senderPsid, quickReply) {
 // Handles messages events
 async function handleMessage(senderPsid, message, recipientId) {
   let response;
+  const user = await getUserData(senderPsid);
 
   if (message.quick_reply) {
     handleQuickReply(senderPsid, message.quick_reply);
+  } else if (message.text.includes("hey my bot")) {
+    theme = {};
+    response = {
+      messaging_type: "RESPONSE",
+      message: {
+        text: `Hey ${user.first_name}! On parle de quoi aujourd'hui ?`,
+        quick_replies: [
+          {
+            content_type: "text",
+            title: "J'aimerais adopter un animal",
+            payload: "animal",
+          },
+          {
+            content_type: "text",
+            title: "Rien pour le moment",
+            payload: "nothing",
+          },
+        ],
+      },
+    };
+    await sendMessage(senderPsid, response);
+  } else {
+    response = [
+      {
+        messaging_type: "RESPONSE",
+        message: {
+          text: `Je suis désolé, je n'ai pas compris ta demande...`,
+        },
+      },
+      {
+        messaging_type: "RESPONSE",
+        message: {
+          text: `Je peux te proposer ces sujets de conversation:`,
+          quick_replies: [
+            {
+              content_type: "text",
+              title: "J'aimerais adopter un animal",
+              payload: "animal",
+            },
+            {
+              content_type: "text",
+              title: "Rien pour le moment",
+              payload: "nothing",
+            },
+          ],
+        },
+      },
+    ];
+    await sendMessage(senderPsid, response);
   }
-
-  // Checks if the message contains text
-
-  // if (message.text && res) {
-  //   if (message.text.toLowerCase() == "hey my bot") {
-  //     response = {
-  //       text: `Hey ${userData.first_name}!`,
-  //     };
-  //     await callSendAPI(senderPsid, response);
-  //     callSendAPI(senderPsid, {
-  //       // messaging_type: "RESPONSE",
-  //       message: {
-  //         text: "Pick a color:",
-  //         quick_replies: [
-  //           {
-  //             content_type: "text",
-  //             title: "Red",
-  //             payload: "<POSTBACK_PAYLOAD>",
-  //             // image_url: "http://example.com/img/red.png",
-  //           },
-  //           {
-  //             content_type: "text",
-  //             title: "Green",
-  //             payload: "<POSTBACK_PAYLOAD>",
-  //             // image_url: "http://example.com/img/green.png",
-  //           },
-  //         ],
-  //       },
-  //     });
-  //   } else {
-  //     response = {
-  //       text: `Désolé je n'ai pas compris votre message`,
-  //     };
-  //   }
-
-  //   // Create the payload for a basic text message, which
-  //   // will be added to the body of your request to the Send API
-  // } else if (message.attachments) {
-  //   // Get the URL of the message attachment
-  //   let attachmentUrl = message.attachments[0].payload.url;
-  //   response = {
-  //     attachment: {
-  //       type: "template",
-  //       payload: {
-  //         template_type: "generic",
-  //         elements: [
-  //           {
-  //             title: "Is this the right picture?",
-  //             subtitle: "Tap a button to answer.",
-  //             image_url: attachmentUrl,
-  //             buttons: [
-  //               {
-  //                 type: "postback",
-  //                 title: "Yes!",
-  //                 payload: "yes",
-  //               },
-  //               {
-  //                 type: "postback",
-  //                 title: "No!",
-  //                 payload: "no",
-  //               },
-  //             ],
-  //           },
-  //         ],
-  //       },
-  //     },
-  //   };
-  // }
-
-  // Send the response message
-  // if (response) {
-  //   callSendAPI(senderPsid, response);
-  // }
 }
 
 // Handles messaging_postbacks events
@@ -261,12 +265,15 @@ async function handlePostback(senderPsid, receivedPostback) {
   const user = await getUserData(senderPsid);
 
   // Set the response based on the postback payload
-  if (user) {
-    if (payload === "get_started") {
+  if (true) {
+    if (theme.theme === "animal") {
+      response = await theme.animal.handlePayload(payload);
+    } else if (payload === "get_started") {
+      theme = {};
       response = {
         messaging_type: "RESPONSE",
         message: {
-          text: `Hey ${user.first_name}! On parle de quoi aujourd'hui ?`,
+          text: `Hey ${user.first_name} ! On parle de quoi aujourd'hui ?`,
           quick_replies: [
             {
               content_type: "text",
@@ -281,14 +288,49 @@ async function handlePostback(senderPsid, receivedPostback) {
           ],
         },
       };
-    } else if (payload === "no") {
-      response = { text: "Oops, try sending another image." };
+    } else {
+      response = [
+        {
+          messaging_type: "RESPONSE",
+          message: {
+            text: `Je suis désolé, je n'ai pas compris ta demande...`,
+          },
+        },
+        {
+          messaging_type: "RESPONSE",
+          message: {
+            text: `Je peux te proposer ces sujets de conversation:`,
+            quick_replies: [
+              {
+                content_type: "text",
+                title: "J'aimerais adopter un animal",
+                payload: "animal",
+              },
+              {
+                content_type: "text",
+                title: "Rien pour le moment",
+                payload: "nothing",
+              },
+            ],
+          },
+        },
+      ];
     }
-    // Send the message to acknowledge the postback
-    callSendAPI(senderPsid, response);
+    await sendMessage(senderPsid, response);
   }
 }
 
+async function sendMessage(senderPsid, responses) {
+  if (Array.isArray(responses)) {
+    let delay = 0;
+    for (let response of responses) {
+      setTimeout(() => callSendAPI(senderPsid, response), delay * 2000);
+      delay++;
+    }
+  } else {
+    await callSendAPI(senderPsid, responses);
+  }
+}
 // Sends response messages via the Send API
 async function callSendAPI(senderPsid, response) {
   // The page access token we have generated in your app settings
@@ -301,6 +343,8 @@ async function callSendAPI(senderPsid, response) {
     },
     ...response,
   };
+
+  console.log("requestBody => ", requestBody);
 
   const senderAction = await axios
     .post(
@@ -316,25 +360,21 @@ async function callSendAPI(senderPsid, response) {
     .then((res) => {
       return res.data;
     })
-    .catch((err) => {});
+    .catch((err) => {
+      console.log("err", err);
+    });
 
   // Send the HTTP request to the Messenger Platform
   if (senderAction) {
-    request(
-      {
-        uri: "https://graph.facebook.com/v2.6/me/messages",
-        qs: { access_token: PAGE_ACCESS_TOKEN },
-        method: "POST",
-        json: requestBody,
-      },
-      (err, _res, _body) => {
-        if (!err) {
-          console.log("Message sent!");
-        } else {
-          console.error("Unable to send message:" + err);
-        }
-      }
-    );
+    axios
+      .post(
+        "https://graph.facebook.com/v2.6/me/messages?access_token=" +
+          PAGE_ACCESS_TOKEN,
+        requestBody
+      )
+      .then((res) => {
+        console.log("res", res.data);
+      });
   }
 }
 
